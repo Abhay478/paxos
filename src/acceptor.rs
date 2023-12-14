@@ -10,17 +10,17 @@ use serde_json::{from_slice, to_vec};
 
 use crate::models::{Ballot, Message, Proposal};
 
-type AcceptList<T> = Arc<Mutex<Vec<Proposal<T>>>>;
-struct Acceptor<T: Clone + Debug + serde::Serialize + serde::de::DeserializeOwned> {
-    pub id: u32,
+type AcceptList = Arc<Mutex<Vec<Proposal>>>;
+struct Acceptor {
+    pub id: usize,
     pub ballot: Arc<Mutex<Ballot>>,
-    pub accepted: AcceptList<T>,
+    pub accepted: AcceptList,
     pub sock: UdpSocket,
     buf: Vec<u8>,
 }
 
-impl<T: Clone + Debug + serde::de::DeserializeOwned + serde::Serialize> Acceptor<T> {
-    pub fn new(id: u32, sock: UdpSocket) -> Acceptor<T> {
+impl Acceptor {
+    pub fn new(id: usize, sock: UdpSocket) -> Acceptor {
         Acceptor {
             id,
             ballot: Arc::new(Mutex::new(Ballot::new(0, 0))),
@@ -30,7 +30,7 @@ impl<T: Clone + Debug + serde::de::DeserializeOwned + serde::Serialize> Acceptor
         }
     }
 
-    fn get_latest_accepts(&self) -> Vec<Proposal<T>> {
+    fn get_latest_accepts(&self) -> Vec<Proposal> {
         self.accepted
             .lock()
             .unwrap()
@@ -41,9 +41,9 @@ impl<T: Clone + Debug + serde::de::DeserializeOwned + serde::Serialize> Acceptor
             .collect()
     }
 
-    fn receive_prepare(&mut self, req: Message<T>) -> Message<T> {
+    fn receive_prepare(&mut self, req: Message<()>) -> Message<()> {
         let mut u = self.ballot.lock().unwrap();
-        if let Message::Phase1a(_num, ballot, _) = req {
+        if let Message::Phase1a(_num, ballot) = req {
             if ballot > *u {
                 *u = ballot;
             }
@@ -53,7 +53,7 @@ impl<T: Clone + Debug + serde::de::DeserializeOwned + serde::Serialize> Acceptor
         }
     }
 
-    fn receive_accept_request(&mut self, req: Message<T>) -> Message<T> {
+    fn receive_accept_request(&mut self, req: Message<()>) -> Message<()> {
         let u = self.ballot.lock().unwrap();
         if let Message::Phase2a(num, proposal) = req {
             if proposal.ballot == *u {
@@ -65,9 +65,9 @@ impl<T: Clone + Debug + serde::de::DeserializeOwned + serde::Serialize> Acceptor
         }
     }
 
-    fn handle(&mut self, req: Message<T>) -> Message<T> {
+    fn handle(&mut self, req: Message<()>) -> Message<()> {
         match req {
-            Message::Phase1a(_, _, _) => self.receive_prepare(req),
+            Message::Phase1a(_, _) => self.receive_prepare(req),
             Message::Phase2a(_, _) => self.receive_accept_request(req),
             _ => unreachable!(),
         }
@@ -75,10 +75,10 @@ impl<T: Clone + Debug + serde::de::DeserializeOwned + serde::Serialize> Acceptor
 }
 
 pub fn listen<T: Clone + Debug + serde::de::DeserializeOwned + serde::Serialize>(
-    id: u32,
+    id: usize,
     sock: UdpSocket,
 ) {
-    let mut q = Acceptor::<T>::new(id, sock);
+    let mut q = Acceptor::new(id, sock);
     // let mut log = vec![];
     loop {
         let mut b = vec![];
