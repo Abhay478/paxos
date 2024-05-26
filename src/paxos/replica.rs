@@ -1,16 +1,15 @@
 #![allow(dead_code)]
 use crate::{Params, ReplicaState};
 
-use self::dir::{get_all_leaders, remember_node};
+use self::dir::{get_all_leaders, remember_node, teach};
 use hashbrown::HashMap;
-use local_ip_address::local_ip;
 use message_io::{
     network::{Endpoint, NetEvent},
     node::{NodeHandler, NodeListener},
 };
 use serde_json::{from_slice, to_vec};
 use sqlite::Connection; // Might have to change this to bincode or a custom impl.
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, net::SocketAddr};
 
 use super::*;
 
@@ -58,12 +57,12 @@ pub struct Replica {
 
     /// These are those icky clients that keep bothering us.
     clients: HashMap<usize, Endpoint>,
-
+    addr: SocketAddr,
     db: Connection,
 }
 
 impl Replica {
-    pub fn new(id: NodeId, handler: NodeHandler<()>) -> Self {
+    pub fn new(id: NodeId, addr: SocketAddr, handler: NodeHandler<()>) -> Self {
         Self {
             id,
             state: ReplicaState::default(),
@@ -74,11 +73,12 @@ impl Replica {
             decisions: HashMap::new(),
             handler,
             clients: HashMap::new(),
+            addr,
             db: Connection::open("paxos.db").unwrap(),
         }
     }
 
-    pub fn with_conn(id: NodeId, handler: NodeHandler<()>, db: Connection) -> Self {
+    pub fn with_conn(id: NodeId, addr: SocketAddr, handler: NodeHandler<()>, db: Connection) -> Self {
         Self {
             id,
             state: ReplicaState::default(),
@@ -89,6 +89,7 @@ impl Replica {
             decisions: HashMap::new(),
             handler,
             clients: HashMap::new(),
+            addr,
             db,
         }
     }
@@ -103,9 +104,6 @@ impl Replica {
                 let c = self.requests.pop().unwrap(); // do this
                 self.proposals.insert(self.slot_in, c.clone()); // and then do that
                 let msg = Message::Propose(self.slot_in, c); // And the this.
-
-                // self.proposals[&self.slot_in] = c;
-
                 let buf = to_vec(&msg).unwrap();
 
                 // Now send the bloody thing
@@ -159,8 +157,8 @@ impl Replica {
 }
 
 /// This is the main loop for the replica. It listens for messages from the leaders and clients.
-pub fn listen(id: NodeId, listener: NodeListener<()>, handler: NodeHandler<()>) {
-    let mut rep = Replica::new(id, handler.clone());
+pub fn listen(id: NodeId, addr: SocketAddr, listener: NodeListener<()>, handler: NodeHandler<()>) {
+    let mut rep = Replica::new(id, addr, handler.clone());
     let leaders = get_all_leaders(handler, &rep.db);
     let params = Params::new();
     // println!("Inited replica {id}.");
@@ -195,15 +193,13 @@ pub fn listen(id: NodeId, listener: NodeListener<()>, handler: NodeHandler<()>) 
                         return; // Timing.
                     }
                 }
-                Message::Identify(kind, ip, other_id, reply) => {
-                    let Ok(_) = remember_node(&rep.db, other_id, &ip.to_string(), kind) else {
+                Message::Identify(entry, reply) => {
+                    let Ok(_) = remember_node(&rep.db, &entry) else {
                         panic!("WTF.");
                     };
 
                     if reply {
-                        let msg = Message::Identify(Identity::Replica, local_ip().unwrap(), id, false);
-                        let buf = to_vec(&msg).unwrap();
-                        rep.handler.network().send(endpoint, &buf);
+                        teach(Entry { id: rep.id, kind: Identity::Replica, addr: rep.addr });
                     }
                 }
                 _ => unreachable!(), // It had better be, damn it.

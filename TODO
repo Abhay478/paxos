@@ -2,6 +2,13 @@
 
 Only `dir.rs` should access it directly.
 
-Handle Spawn and Teach messages everywhere.
+~~Handle Spawn and Teach messages everywhere.~~
+~~They're Identify messages now.~~
+
+Fix all the binaries.
+
+Use the Aux struct.
+
+TEST.
 
 Maybe make a CLI?

@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use std::net::SocketAddr;
+
 use itertools::Itertools;
 use message_io::{
     network::NetEvent,
@@ -8,7 +10,11 @@ use message_io::{
 use serde_json::{from_slice, to_vec};
 use sqlite::Connection;
 
-use crate::{paxos::{Ballot, Message, Proposal}, NodeId};
+use crate::{
+    paxos::{Ballot, Message, Proposal}, Entry, Identity, NodeId
+};
+
+use super::dir::{remember_node, teach};
 
 // type AcceptList = Arc<Mutex<Vec<Proposal>>>;
 
@@ -27,29 +33,29 @@ struct Acceptor {
     // pub sock: UdpSocket,
     // pub listener: NodeListener<()>,
     pub handler: NodeHandler<()>,
-
+    addr: SocketAddr,
     db: Connection,
 }
 
 impl Acceptor {
-    pub fn new(id: NodeId, handler: NodeHandler<()>) -> Acceptor {
+    pub fn new(id: NodeId, addr: SocketAddr, handler: NodeHandler<()>) -> Acceptor {
         Acceptor {
             id,
             ballot: None,
             accepted: vec![],
-            // listener,
             handler,
+            addr,
             db: Connection::open("paxos.db").unwrap(),
         }
     }
 
-    pub fn with_conn(id: NodeId, handler: NodeHandler<()>, db: Connection) -> Acceptor {
+    pub fn with_conn(id: NodeId, addr: SocketAddr, handler: NodeHandler<()>, db: Connection) -> Acceptor {
         Acceptor {
             id,
             ballot: None,
             accepted: vec![],
-            // listener,
             handler,
+            addr,
             db,
         }
     }
@@ -100,18 +106,29 @@ impl Acceptor {
 
 /// This is the main loop for the acceptor.
 /// Acceptors are pretty dumb, so there's not much going on here.
-pub fn listen(id: NodeId, listener: NodeListener<()>, handler: NodeHandler<()>) {
-    let mut q = Acceptor::new(id, handler);
+pub fn listen(id: NodeId, addr: SocketAddr, listener: NodeListener<()>, handler: NodeHandler<()>) {
+    let mut acc = Acceptor::new(id, addr, handler);
     // println!("Inited acceptor {id}.");
 
     let _ = listener.for_each_async(move |event| match event.network() {
         NetEvent::Message(endpoint, buf) => {
-            let res = if let Ok(req) = from_slice(&buf) {
-                to_vec(&q.handle(req)).unwrap()
-            } else {
-                "Invalid message.".as_bytes().to_vec()
-            };
-            q.handler.network().send(endpoint, &res);
+            let msg = from_slice::<Message>(&buf).unwrap();
+            match msg {
+                Message::Identify(entry, reply) => {
+                    let Ok(_) = remember_node(&acc.db, &entry) else {
+                        panic!("WTF.");
+                    };
+
+                    if reply {
+                        teach(Entry { id: acc.id, kind: Identity::Replica, addr: acc.addr });
+                    }
+                }
+                _ => {
+                    let res = acc.handle(msg);
+                    // Mutable borrow. 
+                    acc.handler.network().send(endpoint, &to_vec(&res).unwrap());
+                },
+            }
         }
         NetEvent::Connected(_ep, _) => {
             // println!("Acceptor {id} Connected to {ep}.");

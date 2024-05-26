@@ -1,10 +1,12 @@
-use std::{fmt::Display, fs::File, io::Read, thread, time::Duration};
+use std::{fmt::Display, fs::File, io::Read, net::SocketAddr, thread, time::Duration};
 
+use message_io::node::NodeHandler;
 use rand::{
     distributions::{Distribution, Uniform},
     rngs::ThreadRng,
 };
 use serde::{Deserialize, Serialize};
+use sqlite::Connection;
 use uuid::Uuid;
 
 pub const LOOPBACK: [u8; 4] = [127, 0, 0, 1];
@@ -81,4 +83,37 @@ impl ReplicaState {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NodeId {
     pub id: [u8; 16], // Uuid.
+}
+
+impl NodeId {
+    pub fn new() -> Self {
+        Self {
+            id: *Uuid::new_v4().as_bytes(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Entry {
+    pub id: NodeId,
+    pub kind: Identity,
+    pub addr: SocketAddr,
+}
+
+impl Entry {
+    pub fn new(id: NodeId, kind: Identity, addr: SocketAddr) -> Self {
+        Self {
+            id,
+            kind,
+            addr,
+        }
+    }
+}
+
+
+/// TODO: Replace all handler-addr-db triples with an Aux.
+pub struct Aux<T> {
+    pub handler: NodeHandler<T>,
+    pub addr: SocketAddr,
+    pub db: Connection,
 }

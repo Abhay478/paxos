@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc, thread, time::Duration};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, thread, time::Duration};
 
 use message_io::{
     network::{Endpoint, NetEvent},
@@ -8,10 +8,10 @@ use message_io::{
 use serde_json::to_vec;
 use sqlite::Connection;
 
-use crate::{paxos::dir::commander_init, NodeId};
+use crate::{paxos::dir::commander_init, Entry, Identity, NodeId};
 
 use super::{
-    dir::{get_all_acceptors, get_all_replicas, scout_init},
+    dir::{get_all_acceptors, get_all_replicas, remember_node, scout_init, teach},
     Ballot, Message, Proposal,
 };
 
@@ -196,26 +196,33 @@ pub struct Leader {
     active: bool,
     /// Current ballot.
     ballot: Ballot,
+
+    handler: NodeHandler<Agent>,
+    addr: SocketAddr,
     db: Connection,
 }
 
 impl Leader {
-    pub fn new(id: NodeId) -> Self {
+    pub fn new(id: NodeId, handler: NodeHandler<Agent>, addr: SocketAddr) -> Self {
         Self {
             id,
             proposals: HashMap::new(),
             active: false,
             ballot: Ballot::new(0, id),
+            handler,
+            addr,
             db: Connection::open("paxos.db").unwrap(),
         }
     }
 
-    pub fn with_conn(id: NodeId, db: Connection) -> Self {
+    pub fn with_conn(id: NodeId, handler: NodeHandler<Agent>, db: Connection, addr: SocketAddr) -> Self {
         Self {
             id,
             proposals: HashMap::new(),
             active: false,
             ballot: Ballot::new(0, id),
+            handler,
+            addr,
             db,
         }
     }
@@ -246,11 +253,11 @@ pub fn get_pmax(pvals: &HashMap<usize, Vec<Proposal>>) -> HashMap<usize, Proposa
 }
 
 /// TODO: Add file read for lists.
-pub fn listen(id: NodeId, handler: NodeHandler<Agent>, listener: NodeListener<Agent>) {
-    let mut leader = Leader::new(id);
-    let acceptors = Arc::new(get_all_acceptors(handler.clone(), &leader.db));
+pub fn listen(id: NodeId, listener: NodeListener<Agent>, handler: NodeHandler<Agent>, addr: SocketAddr) {
+    let mut leader = Leader::new(id, handler, addr);
+    let acceptors = Arc::new(get_all_acceptors(leader.handler.clone(), &leader.db));
     thread::sleep(Duration::from_secs(2));
-    let replicas = Arc::new(get_all_replicas(handler.clone(), &leader.db));
+    let replicas = Arc::new(get_all_replicas(leader.handler.clone(), &leader.db));
 
     // println!("Inited leader {}", id);
 
@@ -258,7 +265,7 @@ pub fn listen(id: NodeId, handler: NodeHandler<Agent>, listener: NodeListener<Ag
     let new_acc = acceptors.clone();
 
     let (scout_h, scout_l) = scout_init(&acceptors);
-    let oh = handler.clone();
+    let oh = leader.handler.clone();
     let sh = scout_h.clone();
 
     let _scout = thread::spawn(move || {
@@ -284,7 +291,7 @@ pub fn listen(id: NodeId, handler: NodeHandler<Agent>, listener: NodeListener<Ag
                             let q = p.clone();
 
                             let (h, l) = commander_init(&acceptors);
-                            let oh = handler.clone();
+                            let oh = leader.handler.clone();
                             commanders.push(thread::spawn(move || {
                                 Agent::init_commander(q, new_acc, new_rep, h, l, oh, leader.id)
                             }));
@@ -324,7 +331,7 @@ pub fn listen(id: NodeId, handler: NodeHandler<Agent>, listener: NodeListener<Ag
                             let new_acc = acceptors.clone();
                             let new_rep = replicas.clone();
                             // let new_tx = agent_tx.clone();
-                            let oh = handler.clone();
+                            let oh = leader.handler.clone();
                             if leader.active {
                                 let (h, l) = commander_init(&acceptors);
                                 commanders.push(thread::spawn(move || {
@@ -334,6 +341,16 @@ pub fn listen(id: NodeId, handler: NodeHandler<Agent>, listener: NodeListener<Ag
                                 }))
                             }
                         }
+                        Message::Identify(entry, reply) => {
+                            let Ok(_) = remember_node(&leader.db, &entry) else {
+                                panic!("WTF.");
+                            };
+
+                            if reply {
+                                teach(Entry { id: leader.id, kind: Identity::Leader, addr: leader.addr });
+                            }
+                        }
+                        
                         /* Message::Terminate => {
                             return;
                         } */

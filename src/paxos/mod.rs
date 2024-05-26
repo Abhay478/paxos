@@ -5,11 +5,10 @@ pub mod dir;
 pub mod leader;
 pub mod replica;
 
-use std::{fmt::Debug, net::IpAddr};
 
 use serde_derive::{Deserialize, Serialize};
 
-use crate::{Identity, NodeId};
+use crate::{Entry, Identity, NodeId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Ballot {
@@ -77,15 +76,15 @@ pub enum Message {
     Decision(usize, Command),
 
     // leader <-> acceptor
-    Phase1a(NodeId, Ballot),                       // acceptor id
+    Phase1a(NodeId, Ballot),                        // acceptor id
     Phase1b(NodeId, NodeId, Ballot, Vec<Proposal>), // leader id, acceptor id,
-    Phase2a(NodeId, Proposal),                     // leader id
+    Phase2a(NodeId, Proposal),                      // leader id
     Phase2b(NodeId, NodeId, Ballot),                // leader id, acceptor id
 
     /// Special
     /// Each time a new node joins the cluster, it sends this message to all other nodes.
     /// Its credentials are added to the db, and the other node responds with the same message.
-    /// 
+    ///
     /// The bool avoids an infinite loop.
-    Identify(Identity, IpAddr, NodeId, bool), // I am me.
+    Identify(Entry, bool), // I am me.
 }
