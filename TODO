@@ -1,0 +1,7 @@
+~~Create a id-kind-ip store for each node. It's a sqlite database.~~
+
+Only `dir.rs` should access it directly.
+
+Handle Spawn and Teach messages everywhere.
+
+Maybe make a CLI?
